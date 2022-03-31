@@ -1,0 +1,197 @@
+Order Status (intex.js)
+------------
+
+/*
+  The purpose of this function is to Audit SNP order.
+  When user completes the transaction and scans at Alvarado device.
+  Once scanned, we update Receipt collection with exitScan: true .
+
+*/
+
+const Receipt = require('../models/Receipt');
+const ErrorResp = require('../middleware/getAppError');
+
+module.exports = (context, req) => {
+  const reqHeaders = req.headers;
+  context.log('orderStatus req:-', JSON.stringify(reqHeaders));
+  // adding health check upon vendor (alvaradp) request.
+  if (reqHeaders.status) {
+    context.res = {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        status: 'available'
+      }
+    };
+    context.done();
+    return;
+  }
+  const {
+    orderid,
+    source,
+    storeid,
+    banner
+  } = reqHeaders;
+  if (!orderid || !source || !storeid || !banner) {
+    context.res = ErrorResp(
+      400,
+      '1',
+      4000,
+      'Invalid request. Missing required fields',
+      'request',
+      'request_validation',
+      'SNP'
+    );
+    context.done();
+    return;
+  }
+
+  Receipt
+    .findOne({ store_id: storeid, order_id: orderid },
+      { exitScan: 1 })
+    .then(receipt => {
+      context.log('orderStatus:- receipt', receipt);
+      if (!receipt) {
+        context.res = ErrorResp(
+          404,
+          '1',
+          4004,
+          'No receipt found for the given order ID',
+          'order_not_found',
+          'resource_not_found',
+          'SNP'
+        );
+        context.done();
+      } else if (receipt.exitScan) {
+        // do not let same receipt scan the second time
+        // as it would cause the fraud
+        context.res = ErrorResp(
+          200,
+          '1',
+          4003,
+          'Duplicate scan',
+          'invalid_request',
+          'receipt_scanned_again',
+          'SNP'
+        );
+        context.done();
+      } else {
+        // update receipt, that it is exited
+        return Receipt.updateOne({ store_id: storeid, order_id: orderid },
+          { $set: { exitScan: true } });
+      }
+    })
+    .then(updatedReceipt => {
+      context.res = ErrorResp(
+        200,
+        '0',
+        2000,
+        'Transaction is audited',
+        'valid_order',
+        'audited_receipt',
+        'SNP'
+      );
+      context.done();
+    })
+    .catch(err => {
+      context.log('orderStatus error:-', err);
+      context.res = ErrorResp(
+        500,
+        '1',
+        5000,
+        'Unable to process the request. Please try again after sometime',
+        'ERROR',
+        'server_error',
+        'SNP'
+      );
+      context.done();
+    });
+};
+=========================================================
+
+Receipt.js
+-----
+
+'use strict';
+const mongoose = require('mongoose');
+
+const ReceiptSchema = mongoose.Schema({
+    "batch_id": {
+        type: String,
+        required: false
+    },
+    "total_amount" : {
+        type: Number,
+        required: false
+    },
+    "order_id": {
+        type: String,
+        required: true
+    },
+    "store_id": {
+        type: String,
+        required: true
+    },
+    "guid": {
+        type: String,
+        required: true
+    },
+    "time_stamp": {
+        type: Number,
+        required: true
+    },
+    "item_count": {
+        type: Number,
+        required: true
+    },
+    "audit": {
+        type: Boolean,
+        required: false
+    },
+    "notified": {
+        type: Boolean,
+        required: false
+    },
+    "store_address": {
+        type: String,
+        required: false
+    },
+    "store_time": {
+        type: String,
+        required: false
+    },
+    "item_count": {
+        type: String,
+        required: false
+    },
+    "terminal_number": {
+        type: String,
+        required: false
+    },
+    "transaction_id": {
+        type: String,
+        required: false
+    },
+    "retrieve_barcode_value": {
+        type: String,
+        required: false
+    },
+    "receipt":{
+        type: String,
+        required: false
+    },
+    "receipt_json": {
+        type: mongoose.Schema.Types.Mixed,
+        required: false
+    },
+    "itemNotScanned": {
+        type: Boolean,
+        required: false
+    },
+    'exitScan': {
+      type: Boolean,
+      required: false
+    }
+
+})
+module.exports = mongoose.model('Receipt', ReceiptSchema, 'receipt')
